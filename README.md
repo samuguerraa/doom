@@ -18,8 +18,8 @@ A research group collects per-tic gameplay data from a hacked Chocolate-Doom bui
 ## Tech Stack
 
 - **PostgreSQL 18** — primary DBMS
-- **Python 3** — synthetic data generation
-- **SQL** — DDL, ETL, analytical queries, indexes, views
+- **Python 3.12** — synthetic data generation (`csv`, `math`, `random` stdlib modules)
+- **psql** — CLI client for DDL execution and ETL loading
 
 ---
 
@@ -83,13 +83,23 @@ This will:
 
 ## Database Schema
 
+![ER Diagram](docs/er_diagram.png)
+
 The schema consists of 12 normalized tables (3NF) organized in two branches:
 
 **Telemetry branch:** `Episode → Map → Sector → TelemetryEvent ← Game ← GameParticipant ← Player ← User`
 
 **UX branch:** `User → UXResponse → UXResponseItem ← UXItem ← UXInstrument`
 
-![ER Diagram](docs/er_diagram.png)
+---
+
+## Key Design Decisions
+
+- **3NF normalization** across all 12 tables to minimize redundancy and ensure data integrity
+- **Staging table pattern** in ETL to isolate raw ingestion from validated core data, with a dedicated error log table for malformed records
+- **Materialized view** for trajectory aggregations (`mv_player_traj_stats`) to avoid recomputing LAG window functions on every analytical query
+- **Nullable user_id in UXResponse** to support consent revocation — records are anonymized rather than deleted, preserving research data integrity
+- **UNIQUE(game_id, player_id, tic)** constraint on TelemetryEvent enables idempotent ETL re-runs without duplicates
 
 ---
 
@@ -97,22 +107,33 @@ The schema consists of 12 normalized tables (3NF) organized in two branches:
 
 | # | Query | Technique |
 |---|-------|-----------|
-| Q1 | Average session duration per map | AVG + GROUP BY |
-| Q3 | Shortest and longest trajectory per player | Window functions (LAG) |
-| Q4 | UX responses for above-average trajectory players | Subquery + JOIN |
-| Q5 | Most visited sector per episode and map | COUNT + ORDER BY |
-| Q6 | Tics where players were together in a sector | Self-join |
-| Q8 | Total distance and average speed per player | Window functions + aggregation |
+| 1 | Average session duration per map | AVG + GROUP BY |
+| 2 | Shortest and longest trajectory per player | Window functions (LAG) |
+| 3 | UX responses for above-average trajectory players | Subquery + JOIN |
+| 4 | Most visited sector per episode and map | COUNT + ORDER BY |
+| 5 | Tics where players were together in a sector | Self-join |
+| 6 | Total distance and average speed per player | Window functions + aggregation |
 
 ---
 
 ## Index Evaluation
 
-| Index | Speedup |
-|-------|---------|
-| `idx_tel_game_player_tic` | ~309x (50.6ms → 0.16ms) |
-| `idx_tel_sector` | ~70x (17.4ms → 0.25ms) |
-| `idx_gp_player_game` | Minimal (small table) |
+| Index | Columns | Without Index | With Index | Speedup |
+|-------|---------|---------------|------------|---------|
+| `idx_tel_game_player_tic` | game_id, player_id, tic | Seq Scan — 50.6ms | Index Scan — 0.16ms | ~309x |
+| `idx_tel_sector` | sector_id, game_id | Seq Scan — 17.4ms | Bitmap Index Scan — 0.25ms | ~70x |
+| `idx_gp_player_game` | player_id, game_id | Seq Scan — 0.047ms | Seq Scan — 0.042ms | Minimal* |
+
+*`idx_gp_player_game` shows minimal improvement on the 20-row test dataset. Performance gains will materialize as GameParticipant grows to thousands of rows in production.
+
+---
+
+## Known Limitations
+
+- Synthetic data does not replicate real multiplayer session distributions — trajectory patterns are randomized rather than behavior-driven
+- ETL pipeline assumes well-formed TSV field count; files with missing columns are rejected entirely rather than partially recovered
+- BANGS survey data is synthetic and does not represent statistically valid psychological measurements
+- Index evaluation was performed on a 51,000-row dataset; results may differ at production scale
 
 ---
 
@@ -120,4 +141,5 @@ The schema consists of 12 normalized tables (3NF) organized in two branches:
 
 **Samuel Guerra Sánchez**  
 samuel_guerra@javeriana.edu.co  
-Pontificia Universidad Javeriana — Bases de Datos, Period 2610
+Pontificia Universidad Javeriana  
+Database Systems (Bases de Datos) — Period 2610, 2026
