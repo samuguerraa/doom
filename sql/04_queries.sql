@@ -57,7 +57,7 @@ above_avg_players AS (
     WHERE d.avg_duration > global_avg.global_avg_duration
 )
 SELECT
-    p.nickname,
+    pl.nickname,
     ui.item_text,
     uri.value
 FROM above_avg_players aap
@@ -66,7 +66,7 @@ JOIN "User" u ON pl.user_id = u.user_id
 JOIN UXResponse ur ON u.user_id = ur.user_id
 JOIN UXResponseItem uri ON ur.response_id = uri.response_id
 JOIN UXItem ui ON uri.item_id = ui.item_id
-ORDER BY p.nickname, ui.item_number;
+ORDER BY pl.nickname, ui.item_number;
 
 
 -- ── Query 5: Most visited sector (hotspot) per episode and map ──
